@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>THE REAL OVERLAP - Skin Builder</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root { --miku: #39C5BB; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Kanit', sans-serif; background: #000; color: white; display: flex; flex-direction: column; align-items: center; overflow-x: hidden; }
+        
+        .ui-panel {
+            position: sticky; top: 0; z-index: 10000; width: 100%; background: rgba(15, 15, 15, 0.9);
+            backdrop-filter: blur(10px); border-bottom: 1px solid #333; padding: 10px;
+            display: flex; flex-wrap: wrap; gap: 10px; justify-content: center;
+        }
+        .input-group { display: flex; flex-direction: column; gap: 2px; }
+        label { font-size: 10px; color: var(--miku); font-weight: bold; }
+        input { background: #222; border: 1px solid var(--miku); color: #fff; padding: 6px; border-radius: 4px; width: 80px; text-align: center; }
+        
+        .btn { border: none; border-radius: 6px; padding: 10px 15px; font-weight: bold; cursor: pointer; }
+        .btn-up { background: var(--miku); color: #000; }
+        .btn-sav { background: #fff; color: #000; }
+
+        #stage { 
+            width: 100%; 
+            padding: 40px 10px; 
+            display: flex; 
+            justify-content: center; /* วางตรงกลางจอ */
+            overflow: visible;
+        }
+        
+        #collage {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-start;
+            background: transparent;
+            /* ล็อคความกว้างตายตัว ห้ามหด */
+            width: var(--cw, 800px); 
+            min-width: var(--cw, 800px);
+            transform-origin: top center; /* ให้เวลาซูมมันเกาะอยู่ด้านบนตรงกลาง */
+        }
+
+        .item {
+            position: relative;
+            width: var(--w, 150px);
+            /* บังคับสัดส่วนการ์ด IDV (1:1.4) */
+            height: calc(var(--w) * 1.4); 
+            margin-right: var(--mx, 0px);
+            margin-bottom: var(--my, 0px);
+            overflow: visible;
+            cursor: move;
+        }
+        .item:hover { z-index: 99999 !important; transform: scale(1.1); }
+        
+        .item img {
+            width: 100%;
+            height: 100%;
+            display: block;
+            pointer-events: none;
+            flex-shrink: 0;
+            object-fit: contain; 
+            object-position: center;
+        }
+
+        .del {
+            position: absolute; top: -5px; right: -5px; background: red; color: white;
+            width: 20px; height: 20px; border-radius: 50%; font-size: 12px;
+            display: none; align-items: center; justify-content: center; z-index: 110; border: none;
+        }
+        .item:hover .del { display: flex; }
+
+        #load { position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 20000; display: none; flex-direction: column; justify-content: center; align-items: center; }
+    </style>
+</head>
+<body>
+
+<div id="load"><div style="color:var(--miku)">กำลังประมวลผลพิกเซล...</div></div>
+
+<div class="ui-panel">
+    <div class="input-group"><label>สกินต่อแถว</label><input type="number" id="cols" value="5" min="1"></div>
+    <div class="input-group"><label>ขนาดรูป</label><input type="number" id="w" value="150"></div>
+    <div class="input-group"><label>ซ้อนซ้าย-ขวา</label><input type="number" id="mx" value="-30"></div>
+    <div class="input-group"><label>ซ้อนบน-ล่าง</label><input type="number" id="my" value="-40"></div>
+    <button class="btn btn-up" onclick="document.getElementById('file').click()">+ เพิ่มสกิน</button>
+    <button class="btn btn-sav" onclick="save()">เซฟภาพ</button>
+    <input type="file" id="file" multiple accept="image/*" style="display:none">
+</div>
+
+<div id="stage"><div id="collage"></div></div>
+
+<script>
+    const collage = document.getElementById('collage');
+    const stage = document.getElementById('stage');
+    const load = document.getElementById('load');
+
+    // ฟังก์ชันจัดเลเยอร์ใหม่: แถวล่างทับแถวบน + ซ้ายทับขวา
+    function updateZ() {
+        const items = document.querySelectorAll('.item');
+        let cols = Math.max(1, parseInt(document.getElementById('cols').value) || 1);
+        
+        items.forEach((item, i) => {
+            let row = Math.floor(i / cols); // หาว่าอยู่แถวที่เท่าไหร่
+            let col = i % cols;             // หาว่าอยู่คอลัมน์ที่เท่าไหร่
+            
+            // สูตร: แถวล่างสุด (row มาก) ค่าพลังจะเยอะสุด + ซ้ายสุด (col น้อย) ค่าพลังเสริม
+            let zVal = (row * 1000) + (cols - col);
+            item.style.zIndex = zVal; 
+        });
+    }
+
+    async function crop(file) {
+        return new Promise(res => {
+            const img = new Image();
+            img.src = URL.createObjectURL(file);
+            img.onload = () => {
+                const cvs = document.createElement('canvas');
+                const ctx = cvs.getContext('2d', {willReadFrequently:true});
+                cvs.width = img.width; cvs.height = img.height;
+                ctx.drawImage(img, 0, 0);
+                const data = ctx.getImageData(0,0,cvs.width,cvs.height).data;
+                let t=cvs.height, b=0, l=cvs.width, r=0, found=false;
+                for(let y=0; y<cvs.height; y++) {
+                    for(let x=0; x<cvs.width; x++) {
+                        if(data[(y*cvs.width+x)*4+3] > 20) {
+                            t=Math.min(t,y); b=Math.max(b,y); l=Math.min(l,x); r=Math.max(r,x); found=true;
+                        }
+                    }
+                }
+                if(!found) { res(img.src); return; }
+                const cCvs = document.createElement('canvas');
+                cCvs.width = r-l+1; cCvs.height = b-t+1;
+                cCvs.getContext('2d').drawImage(img, l, t, cCvs.width, cCvs.height, 0, 0, cCvs.width, cCvs.height);
+                res(cCvs.toDataURL());
+                URL.revokeObjectURL(img.src);
+            };
+        });
+    }
+
+    function refresh() {
+        let cols = Math.max(1, parseInt(document.getElementById('cols').value) || 1);
+        let w = parseFloat(document.getElementById('w').value) || 150;
+        let mx = parseFloat(document.getElementById('mx').value) || 0;
+        let my = parseFloat(document.getElementById('my').value) || 0;
+
+        // คำนวณความกว้างกางออกเป๊ะๆ
+        let exactWidth = w + ((cols - 1) * (w + mx)); 
+
+        collage.style.setProperty('--cw', exactWidth + 'px');
+        collage.style.setProperty('--w', w + 'px');
+        collage.style.setProperty('--mx', mx + 'px');
+        collage.style.setProperty('--my', my + 'px');
+
+        // ฟังก์ชันทำเว็บให้ใช้ง่ายกับมือถือ: ย่อสเกลภาพให้พอดีจอโดยไม่ต้องเลื่อนแนวนอน
+        let availableWidth = window.innerWidth - 20; // เผื่อขอบข้างละ 10px
+        let totalItems = document.querySelectorAll('.item').length;
+        
+        if (exactWidth > availableWidth && exactWidth > 0) {
+            let scaleRatio = availableWidth / exactWidth;
+            collage.style.transform = `scale(${scaleRatio})`;
+            
+            // ต้องคำนวณความสูงหลอกๆ ให้ stage ด้วย ไม่งั้นมันจะเหลือพื้นที่ว่างด้านล่างเยอะ
+            if(totalItems > 0) {
+                let rows = Math.ceil(totalItems / cols);
+                let itemHeight = w * 1.4;
+                let exactHeight = itemHeight + ((rows - 1) * (itemHeight + my));
+                stage.style.height = (exactHeight * scaleRatio + 100) + 'px'; 
+            }
+        } else {
+            collage.style.transform = 'none';
+            stage.style.height = 'auto'; // คืนค่าความสูง
+        }
+
+        updateZ(); // อัปเดต Z-index เสมอเผื่อเปลี่ยนจำนวนคอลัมน์
+    }
+
+    ['cols','w','mx','my'].forEach(id => document.getElementById(id).oninput = refresh);
+    window.addEventListener('resize', refresh); // ตะแคงจอก็จัดใหม่ให้
+
+    document.getElementById('file').onchange = async (e) => {
+        const files = Array.from(e.target.files);
+        if(!files.length) return;
+        load.style.display = 'flex';
+        for(let f of files) {
+            const url = await crop(f);
+            const div = document.createElement('div');
+            div.className = 'item';
+            div.innerHTML = `<button class="del" onclick="this.parentElement.remove(); refresh();">✕</button><img src="${url}">`;
+            collage.appendChild(div);
+        }
+        load.style.display = 'none';
+        refresh();
+    };
+
+    new Sortable(collage, { animation: 150, onSort: refresh }); // ลากเสร็จจัด Z-index ใหม่ทันที
+
+    async function save() {
+        if(!collage.children.length) return;
+        load.style.display = 'flex';
+        document.querySelectorAll('.del').forEach(b => b.style.opacity = '0');
+        
+        // ยกเลิกการซูมชั่วคราวก่อนเซฟ เพื่อให้ได้ภาพ HD ต้นฉบับ
+        collage.style.transform = 'none';
+        
+        const cvs = await html2canvas(collage, { scale: 2, backgroundColor: null });
+        const a = document.createElement('a');
+        a.download = `Skins-Final.png`;
+        a.href = cvs.toDataURL();
+        a.click();
+        
+        // คืนค่ากลับให้พอดีจอมือถือเหมือนเดิม
+        document.querySelectorAll('.del').forEach(b => b.style.opacity = '1');
+        refresh(); 
+        load.style.display = 'none';
+    }
+    
+    // โหลดครั้งแรกให้รีเฟรช 1 ที
+    refresh();
+</script>
+</body>
+</html>
